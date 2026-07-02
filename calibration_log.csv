@@ -1,0 +1,9 @@
+object,night,filter,source_file,output_file,bias_source,flat_source
+JUPITER,20111116,open,/Users/aidandombrosky/Desktop/Spotted Starstuff/NURO_2011/10 - Nov16_11/JUPITER/20111116.058.fits.gz,/Users/aidandombrosky/Desktop/calibrated/JUPITER/20111116/20111116.058.fits.gz,night-specific,night-specific
+JUPITER,20111116,open,/Users/aidandombrosky/Desktop/Spotted Starstuff/NURO_2011/10 - Nov16_11/JUPITER/20111116.059.fits,/Users/aidandombrosky/Desktop/calibrated/JUPITER/20111116/20111116.059.fits,night-specific,night-specific
+JUPITER,20111116,open,/Users/aidandombrosky/Desktop/Spotted Starstuff/NURO_2011/10 - Nov16_11/JUPITER/20111116.059.fits.gz,/Users/aidandombrosky/Desktop/calibrated/JUPITER/20111116/20111116.059.fits.gz,night-specific,night-specific
+M57,20111116,open,/Users/aidandombrosky/Desktop/Spotted Starstuff/NURO_2011/10 - Nov16_11/M57/20111116.053.fits.gz,/Users/aidandombrosky/Desktop/calibrated/M57/20111116/20111116.053.fits.gz,night-specific,night-specific
+M57,20111116,open,/Users/aidandombrosky/Desktop/Spotted Starstuff/NURO_2011/10 - Nov16_11/M57/20111116.054.fits.gz,/Users/aidandombrosky/Desktop/calibrated/M57/20111116/20111116.054.fits.gz,night-specific,night-specific
+M57,20111116,open,/Users/aidandombrosky/Desktop/Spotted Starstuff/NURO_2011/10 - Nov16_11/M57/20111116.055.fits.gz,/Users/aidandombrosky/Desktop/calibrated/M57/20111116/20111116.055.fits.gz,night-specific,night-specific
+M57,20111116,open,/Users/aidandombrosky/Desktop/Spotted Starstuff/NURO_2011/10 - Nov16_11/M57/20111116.056.fits.gz,/Users/aidandombrosky/Desktop/calibrated/M57/20111116/20111116.056.fits.gz,night-specific,night-specific
+M57,20111116,open,/Users/aidandombrosky/Desktop/Spotted Starstuff/NURO_2011/10 - Nov16_11/M57/20111116.057.fits.gz,/Users/aidandombrosky/Desktop/calibrated/M57/20111116/20111116.057.fits.gz,night-specific,night-specific
