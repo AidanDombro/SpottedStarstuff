@@ -1,4 +1,4 @@
-##Aidan's Lomb-Scargle power spectra test for a light curve from stringray documentation:
+##======== AIDAN'S LOMB-SCARGLE ANALYZER of DEATH [EXPERIMENTAL PROTOTYPE] ========##
 
 from stingray.lightcurve import Lightcurve
 from stingray.lombscargle import LombScarglePowerspectrum
@@ -33,9 +33,9 @@ ax.tick_params(axis='y', labelsize=16)
 ax.tick_params(which='major', width=1.5, length=7)
 ax.tick_params(which='minor', width=1.5, length=4)
 plt.legend()
-plt.show()
 
-"""
+plt.figure(1)
+
 lps = LombScarglePowerspectrum(
     lc,
     min_freq=0,
@@ -63,6 +63,7 @@ ax[2].plot(lps.freq, lps.power.imag, lw=2, color='blue')
 ax[2].set_xlabel("Frequency (Hz)")
 ax[2].set_ylabel("Power (Imaginary Component)")
 
+plt.figure(2)
 
 ##======== PERIODOGRAMS ========##
 
@@ -81,3 +82,7 @@ frequency, power = LombScargle(t, y, dy).autopower()
 dy = 0.1 * (1 + rand.random(100))
 y = np.sin(2 * np.pi * t) + dy * rand.standard_normal(100)
 frequency, power = LombScargle(t, y, dy).autopower()
+
+plt.figure(3)
+
+plt.show()

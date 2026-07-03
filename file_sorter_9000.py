@@ -1,4 +1,4 @@
-##======== AIDAN'S FILE SORTER 9000, Mk. II (C) TM Patent Pending ========##
+##======== AIDAN'S .FITS FILE SORTER 9000, Mk. II (C) TM Patent Pending ========##
 
 import argparse
 import csv      # will write the manifest (ship's log, arghh)
