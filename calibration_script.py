@@ -8,18 +8,20 @@ from pathlib import Path
 from collections import defaultdict
 
 import numpy as np
-import ccdproc as ccdp
+import ccdproc as ccdp                      # BING, BANG, BOOM
 
-from astropy.io import fits
-from astropy.nddata import CCDData
+from astropy.io import fits                 # reading the .fits files
+from astropy.nddata import CCDData          # ccdproc's data container
 from astropy.stats import mad_std
 
-RAW_ROOT = r"/Users/aidandombrosky/Desktop/Spotted Starstuff/NURO_2011/01 - Jan21_11"
-OUTPUT_DIR = r"/Users/aidandombrosky/Desktop/Spotted Starstuff/calibrated"
-MASTERS_DIR = r"/Users/aidandombrosky/Desktop/Spotted Starstuff/master_calibration"
+##======== CONFIGURATION BLOCK & SUCH ========##
+
+RAW_ROOT = r"/Users/aidandombrosky/Desktop/ROBO_data"
+OUTPUT_DIR = r"/Users/aidandombrosky/Desktop/calibrated"
+MASTERS_DIR = r"/Users/aidandombrosky/Desktop/master_calibrated"
 
 BIAS_DIRNAME = "BIAS"
-FLAT_DIRNAME = "FLAT"
+FLAT_DIRNAME = "TWILIGHT FLAT"
 EXCLUDE_DIRNAMES = {BIAS_DIRNAME, FLAT_DIRNAME, "UNSORTED"}
 
 DRY_RUN = False
@@ -49,7 +51,7 @@ def find_fits_files(root: Path):
 def get_date_token(header, filename: str):
     date_obs = header.get("DATE-OBS")
     if date_obs:
-        return str(date_obs).split("T")[0].replace("-", "")
+        return str(date_obs).split("T")[0].replace("-", "").replace("/", "")
     stem = filename.split(".")[0]
     if stem.isdigit():
         return stem
@@ -139,6 +141,10 @@ def main():
 
     bias_records = scan_dir_with_metadata(raw_root / BIAS_DIRNAME)
     flat_records = scan_dir_with_metadata(raw_root / FLAT_DIRNAME)
+
+    print(f"DEBUG: flat_records has {len(flat_records)} entries")
+    for r in flat_records[:5]:
+        print(f"  {r['path'].name}  night={r['date_token']}  filter={r['filter']}")
 
     if not bias_records:
         print(f"ERROR: no bias frames found under {raw_root / BIAS_DIRNAME}")

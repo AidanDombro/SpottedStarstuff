@@ -1,23 +1,23 @@
 ##======== AIDAN'S .FITS FILE SORTER 9000, Mk. II (C) TM Patent Pending ========##
 
 import argparse
-import csv      # will write the manifest (ship's log, arghh)
+import csv                                 # will write the manifest (ship's log, arghh)
 import shutil
 import sys
 
 from pathlib import Path
 from collections import defaultdict
 
-from astropy.io import fits
+from astropy.io import fits                # reading the .fits files
 
 ##======== CONFIGURATION BLOCK & SUCH ========##
 
-# i'm setting up this as a source directory to change for each of the file names & nights in Dr. Milingo's (JM) thumb drive
-# NOTE: just need to change the path for each separate file then we're good to go
-SOURCE_DIR = r"/Users/aidandombrosky/Desktop/NURO_2011/07 - Mar17_11"
+# i'm setting up this as a source directory to scan each of the file names & nights in Dr. Milingo's (JM) thumb drive
+# NOTE: just need to change the path for any different folder names (collections of nights) then we're good to go
+SOURCE_DIR = r"/Users/aidandombrosky/Desktop/ROBO_data/originals"
 
 # this will be the destination of the folders after the code searches the .fits files recursively [INSERT RECURSION JOKE HERE]
-DEST_DIR = r"/Users/aidandombrosky/Desktop"
+DEST_DIR = r"/Users/aidandombrosky/Desktop/ROBO_data/sorted"
 
 MODE = "copy"  # for first test run, i'll keep JM's files untouched then un-comment following line
 # MODE = "move"
@@ -48,32 +48,44 @@ def find_fits_file(root: Path):
 # reads ONLY header block, not pixel data to keep pixel array untouched
 def get_object_name(header):
     for key in OBJECT_KEYWORDS:
-        val = header.get(key)
+        val = header.get(key)       # returns "None" if there's no key
         if val and str(val).strip():
             raw = str(val).strip()
             normalized = " ".join(raw.split()).upper()  # normalizes raw string so any permutation of an object name with differing capitalization all map to the same folder name
             return raw, normalized
-    return None, None
+    return None, None       # indicates no usable object key
 
-#
+# meant to handle 8 digits in an observation date string (like yyyy mm dd, but normalized) for date-based subfolders
+# all of our files have the date in the .fits file name so we can search through them by leading numbers to organize by night
+# the ALL IMPORTANT FAILSAFE here is the 'unknown_date' return
 def get_date_token(header, filename: str):
     date_obs = header.get("DATE-OBS")
     if date_obs:
         return str(date_obs).split("T")[0].replace("-", "")
 
     stem = filename.split(".")[0]
-    if stem.isdigit():
+    if stem.isdigit():      # this makes sure it's a real date-like number
         return stem
     return "unknown_date"
 
-
+# converts object name into a string to use as a folder name--SAFE!
 def safe_folder_name(name: str) -> str:
     bad_chars = "<>:\"/\\|?*"
     cleaned = "".join(c if c not in bad_chars else "_" for c in name)
-    return cleaned.strip().rstrip(".") or "UNKNOWN"
+    return cleaned.strip().rstrip(".") or "UNKNOWN"     # another FAILSAFE for all bad characters in a file name (hopefully never)
 
-
+# the BIG KAHUNA of all functions, main execution function to run in the following order:
+# 1 - parse arguments fed from the configuration blurb
+# 2 - find all .fits files in selected folder
+# 3 - read each header, classify each by object name
+# 4 - print summary
+# 5 - write a manifest csv
+# 6 - copy/move sorted files into sorted folders
+# ...still has dry_run params in to leave files untouched, but will be overwritten by DRY_RUN = 'False'
 def main():
+
+    # 1:
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", default=SOURCE_DIR)
     parser.add_argument("--dest", default=DEST_DIR)
@@ -95,10 +107,14 @@ def main():
         print("Please edit SOURCE_DIR in the configuration block, or pass --source on the command line.")
         sys.exit(1)
 
+    # 2:
+
     files = find_fits_file(source)
     print(f"Found {len(files)} FITS files under {source}\n")
     if not files:
         sys.exit(0)
+
+    # 3:
 
     by_object = defaultdict(list)
     unclassified = []
@@ -128,6 +144,8 @@ def main():
         if i % 200 == 0:
             print(f" ... scanned {i}/{len(files)}")
 
+    # 4:
+
     print("\n=== OBJECTS FOUND ===")
     for obj_norm, entries in sorted(by_object.items()):
         raw_examples = sorted(set(e[1] for e in entries))
@@ -141,6 +159,8 @@ def main():
         if len(unclassified) > 10:
             print(f" ...& {len(unclassified) - 10} more")
         print("These files will be placed in a folder named 'UNSORTED' if execute.")
+
+    # 5:
 
     manifest_path = Path("object_sort_manifest.csv").resolve()
     with open(manifest_path, "w", newline="") as f:
@@ -157,19 +177,23 @@ def main():
         print("  - re-run from the terminal with --execute.")
         return
 
+    # 6:
+
     print(f"\n=== EXECUTING: {args.mode} files into {dest} ===")
     dest.mkdir(parents=True, exist_ok=True)
     n_done = 0
 
     def place(fpath, obj_folder_name, date_token):
         nonlocal n_done
-        target_dir = dest / safe_folder_name(obj_folder_name)
+        # building destination path:
+        target_dir = dest / safe_folder_name(obj_folder_name)       #
         if args.by_date and date_token:
             target_dir = target_dir / safe_folder_name(date_token)
         target_dir.mkdir(parents=True, exist_ok=True)
 
         target_path = target_dir / fpath.name
-        if target_path.exists():
+
+        if target_path.exists():        # prevents overwriting
             target_path = target_dir / f"{fpath.stem}__dup{n_done}{fpath.suffix}"
 
         if args.mode == "copy":
@@ -178,14 +202,16 @@ def main():
             shutil.move(str(fpath), str(target_path))
         n_done += 1
 
+    # process EVERYTHING classified:
     for obj_norm, entries in by_object.items():
         for fpath, _raw_obj, date_token in entries:
             place(fpath, obj_norm, date_token)
 
+    # handle the unprocessed riff raff:
     for fpath, _reason in unclassified:
         place(fpath, "UNSORTED", None)
 
-    print(f"\nDone. {n_done} files {('copied' if args.mode == 'copy' else 'moved')} into {dest}")
+    print(f"\nDone. {n_done} files {('copied' if args.mode == 'copy' else 'moved')} into {dest}")   # lovely summary
     print("FOLDER LAYOUT:")
     for obj_norm in sorted(by_object.keys()):
         print(f" {dest / safe_folder_name(obj_norm)}")
