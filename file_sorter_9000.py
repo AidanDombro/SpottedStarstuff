@@ -14,10 +14,10 @@ from astropy.io import fits                # reading the .fits files
 
 # i'm setting up this as a source directory to scan each of the file names & nights in Dr. Milingo's (JM) thumb drive
 # NOTE: just need to change the path for any different folder names (collections of nights) then we're good to go
-SOURCE_DIR = r"/Users/aidandombrosky/Desktop/ROBO_data/originals"
+SOURCE_DIR = "/Users/aidandombrosky/Desktop/originals"
 
 # this will be the destination of the folders after the code searches the .fits files recursively [INSERT RECURSION JOKE HERE]
-DEST_DIR = r"/Users/aidandombrosky/Desktop/ROBO_data/sorted"
+DEST_DIR = "/Users/aidandombrosky/Desktop"
 
 MODE = "copy"  # for first test run, i'll keep JM's files untouched then un-comment following line
 # MODE = "move"

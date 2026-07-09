@@ -3,7 +3,14 @@
 import argparse
 import csv
 import sys
+import gc
+import tempfile
+import time
+import warnings
+import multiprocessing.resource_tracker as _rt
 
+
+from tqdm import tqdm
 from pathlib import Path
 from collections import defaultdict
 
@@ -16,16 +23,18 @@ from astropy.stats import mad_std
 
 ##======== CONFIGURATION BLOCK & SUCH ========##
 
-RAW_ROOT = r"/Users/aidandombrosky/Desktop/ROBO_data"
-OUTPUT_DIR = r"/Users/aidandombrosky/Desktop/calibrated"
-MASTERS_DIR = r"/Users/aidandombrosky/Desktop/master_calibrated"
+RAW_ROOT = "/Users/aidandombrosky/Desktop/sorted"
+OUTPUT_DIR = "/Volumes/starstuff/Frames/NURO_2011/calibrated"
+MASTERS_DIR = "/Volumes/starstuff/Frames/NURO_2011/master_calibrated"
 
 BIAS_DIRNAME = "BIAS"
-FLAT_DIRNAME = "TWILIGHT FLAT"
+FLAT_DIRNAME = "FLAT"       # ROBO_cam flats are for some reason under 'TWILIGHT FLAT'
 EXCLUDE_DIRNAMES = {BIAS_DIRNAME, FLAT_DIRNAME, "UNSORTED"}
 
 DRY_RUN = False
 ALLOW_FALLBACK_TO_GLOBAL_MASTER = True
+
+RESUME = True
 
 UNIT = "adu"
 MEM_LIMIT_BYTES = 2e9
@@ -38,6 +47,12 @@ TRIM_SECTION = "[1:2048, 1:2052]"
 
 FITS_EXTENSIONS = {".fits", ".fit", ".fts", ".fits.gz", ".fit.gz"}
 FILTER_KEYWORDS = ["FILTNME1", "FILTNME2", "FILTER", "FILTER1", "FILTNAME"]
+
+warnings.filterwarnings(
+    "ignore",
+    message="resource_tracker",
+    category=UserWarning
+)
 
 def find_fits_files(root: Path):
     files = []
@@ -121,7 +136,84 @@ def combine_ccddata_list(ccddata_list, label):
     combined.meta["ncombine"] = len(ccddata_list)
     return combined
 
+
+def build_master_from_paths(paths, label, progress):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_paths = []
+        for i, p in enumerate(paths):
+            progress.set_postfix_str(f"Building {label}")
+
+            ccd = overscan_correct_and_trim(
+                CCDData.read(p, unit=UNIT)
+            )
+
+            tmp_path = Path(tmpdir) / f"tmp_{i:04d}.fits"
+            ccd.write(tmp_path, overwrite=True)
+
+            tmp_paths.append(str(tmp_path))
+
+            del ccd
+            gc.collect()
+
+            progress.update(1)
+
+        combined = ccdp.combine(
+            tmp_paths,
+            method="median",
+            sigma_clip=True,
+            sigma_clip_low_thresh=SIGMA_CLIP_LOW,
+            sigma_clip_high_thresh=SIGMA_CLIP_HIGH,
+            sigma_clip_func=np.ma.median,
+            sigma_clip_dev_func=mad_std,
+            mem_limit=MEM_LIMIT_BYTES,
+            unit=UNIT,
+        )
+    combined.meta["combined"] = True
+    combined.meta["ncombine"] = len(paths)
+    return combined
+
+def build_master_flat_from_paths(paths, label, master_bias, progress):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_paths = []
+        for i, fp in enumerate(paths):
+            progress.set_postfix_str(f"Building {label}")
+
+            raw = overscan_correct_and_trim(
+                CCDData.read(fp, unit=UNIT)
+            )
+
+            raw = ccdp.subtract_bias(raw, master_bias)
+
+            tmp_path = Path(tmpdir) / f"tmp_{i:04d}.fits"
+
+            raw.write(tmp_path, overwrite=True)
+
+            tmp_paths.append(str(tmp_path))
+
+            del raw
+            gc.collect()
+
+            progress.update(1)
+
+        combined = ccdp.combine(
+            tmp_paths,
+            method="median",
+            sigma_clip=True,
+            sigma_clip_low_thresh=SIGMA_CLIP_LOW,
+            sigma_clip_high_thresh=SIGMA_CLIP_HIGH,
+            sigma_clip_func=np.ma.median,
+            sigma_clip_dev_func=mad_std,
+            mem_limit=MEM_LIMIT_BYTES,
+            unit=UNIT,
+        )
+    combined.meta["combined"] = True
+    combined.meta["ncombine"] = len(paths)
+    return combined
+
+
 def main():
+    start_time = time.perf_counter()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-root", default = RAW_ROOT)
     parser.add_argument("--out-dir", default = OUTPUT_DIR)
@@ -141,10 +233,6 @@ def main():
 
     bias_records = scan_dir_with_metadata(raw_root / BIAS_DIRNAME)
     flat_records = scan_dir_with_metadata(raw_root / FLAT_DIRNAME)
-
-    print(f"DEBUG: flat_records has {len(flat_records)} entries")
-    for r in flat_records[:5]:
-        print(f"  {r['path'].name}  night={r['date_token']}  filter={r['filter']}")
 
     if not bias_records:
         print(f"ERROR: no bias frames found under {raw_root / BIAS_DIRNAME}")
@@ -224,20 +312,35 @@ def main():
         if night in master_bias_cache:
             return master_bias_cache[night]
 
+        expected_path = masters_dir / f"master_bias_{night}.fits"
+        if RESUME and expected_path.exists():
+            tqdm.write(f"  RESUME: loading existing master bias for night {night}")
+            mb = CCDData.read(expected_path, unit=UNIT)
+            master_bias_cache[night] = (mb, "night-specific")
+            return mb, "night-specific"
+
+        global_path = masters_dir / "master_bias_GLOBAL.fits"
+        if RESUME and global_path.exists() and night not in bias_by_night:
+            tqdm.write(f"  RESUME: loading existing GLOBAL master bias")
+            mb = CCDData.read(global_path, unit=UNIT)
+            master_bias_cache["GLOBAL"] = (mb, "GLOBAL FALLBACK")
+            master_bias_cache[night] = (mb, "GLOBAL FALLBACK")
+            return mb, "GLOBAL FALLBACK"
+
         if night in bias_by_night:
             paths = bias_by_night[night]
             print(f" COMBINING {len(paths)} FRAMES for MASTER BIAS (night {night})")
-            overscan_corrected = [overscan_correct_and_trim(CCDData.read(p, unit = UNIT)) for p in paths]
-            mb = combine_ccddata_list(overscan_corrected, f"MASTER BIAS (night {night})")
+            mb = build_master_from_paths(paths, f"MASTER BIAS (night {night})", overall_progress)
+            gc.collect()
             source = "night-specific"
-            mb.write(masters_dir / f"master_bias_{night}.fits", overwrite = True)
+            mb.write(masters_dir / f"master_bias_{night}.fits", overwrite=True)
         elif ALLOW_FALLBACK_TO_GLOBAL_MASTER:
             if "GLOBAL" not in master_bias_cache:
                 all_paths = [r["path"] for r in bias_records]
                 print(f" COMBINING {len(all_paths)} FRAMES for MASTER BIAS as (GLOBAL FALLBACK)")
-                overscan_corrected = [overscan_correct_and_trim(CCDData.read(p, unit = UNIT)) for p in all_paths]
-                mb_global = combine_ccddata_list(overscan_corrected, "MASTER BIAS (GLOBAL FALLBACK - ALL NIGHTS")
+                mb_global = build_master_from_paths(all_paths, "MASTER BIAS (GLOBAL FALLBACK - ALL NIGHTS)", overall_progress)
                 mb_global.write(masters_dir / "master_bias_GLOBAL.fits", overwrite = True)
+                gc.collect()
                 master_bias_cache["GLOBAL"] = (mb_global, "GLOBAL FALLBACK")
             mb, source = master_bias_cache["GLOBAL"]
             print(f" WARNING: NO BIAS for night {night}; using GLOBAL FALLBACK MASTER BIAS")
@@ -251,6 +354,24 @@ def main():
         key = (night, filt)
         if key in master_flat_cache:
             return master_flat_cache[key]
+
+        safe_filt = "".join(c if c.isalnum() else "_" for c in filt)
+        expected_path = masters_dir / f"master_flat_{night}_{safe_filt}.fits"
+        global_path = masters_dir / f"master_flat_GLOBAL_{safe_filt}.fits"
+
+        if RESUME and expected_path.exists():
+            tqdm.write(f"  RESUME: loading existing master flat for night {night}, filter {filt}")
+            mf = CCDData.read(expected_path, unit=UNIT)
+            master_flat_cache[key] = (mf, "night-specific")
+            return mf, "night-specific"
+
+        if RESUME and global_path.exists():
+            tqdm.write(f"  RESUME: loading existing GLOBAL master flat for filter {filt}")
+            mf = CCDData.read(global_path, unit=UNIT)
+            global_key = ("GLOBAL", filt)
+            master_flat_cache[global_key] = (mf, "GLOBAL FALLBACK")
+            master_flat_cache[key] = (mf, "GLOBAL FALLBACK")
+            return mf, "GLOBAL FALLBACK"
 
         if key in flat_by_night_filter:
             paths = flat_by_night_filter[key]
@@ -270,14 +391,11 @@ def main():
         else:
             return None, None
 
-        bias_subtracted = []
-        for fp in paths:
-            raw = overscan_correct_and_trim(CCDData.read(fp, unit = UNIT))
-            bias_subtracted.append(ccdp.subtract_bias(raw, bias_for_subtraction))
-
-        label = f"MASTER FLAT (night {night}, filter {filt})" if source == "night-specific" \
-            else f"MASTER FLAT (GLOBAL FALLBACK, filter {filt})"
-        combined_flat = combine_ccddata_list(bias_subtracted, label)
+        label = (f"MASTER FLAT (night {night}, filter {filt})"
+                 if source == "night-specific"
+                 else f"MASTER FLAT (GLOBAL FALLBACK, filter {filt})")
+        combined_flat = build_master_flat_from_paths(paths, label, bias_for_subtraction, overall_progress)
+        gc.collect()
 
         combined_flat = combined_flat.divide(np.nanmedian(combined_flat.data))
 
@@ -295,45 +413,67 @@ def main():
     log_rows = []
     n_ok, n_skipped = 0, 0
 
-    for obj_name, recs in light_records_by_object.items():
-        print(f"\n--OBJECT: {obj_name} ({len(recs)} frames)--")
-        for rec in recs:
-            night = rec["date_token"]
-            filt = rec["filter"]
-            fpath = rec["path"]
+    all_recs = [
+        (obj_name, rec)
+        for obj_name, recs in light_records_by_object.items()
+        for rec in recs
+    ]
 
-            master_bias, bias_source = get_master_bias(night)
-            if master_bias is None:
-                print(f" SKIP {fpath.name}: NO BIAS available for night {night}")
-                n_skipped += 1
-                continue
+    total_bias_frames = sum(len(v) for v in bias_by_night.values())
 
-            master_flat, flat_source = get_master_flat(night, filt, master_bias)
+    total_flat_frames = sum(len(v) for v in flat_by_night_filter.values())
 
-            if master_flat is None:
-                print(f" SKIP {fpath.name}: NO FLAT available for filter {filt}")
-                n_skipped += 1
-                continue
 
-            try:
-                raw = overscan_correct_and_trim(CCDData.read(fpath, unit=UNIT))
-                bias_sub = ccdp.subtract_bias(raw, master_bias)
-                flat_corrected = ccdp.flat_correct(bias_sub, master_flat)
-            except Exception as e:
-                print(f"  SKIP {fpath.name}: could not read file ({e})")
-                n_skipped += 1
-                continue
 
-            flat_corrected.data[~np.isfinite(flat_corrected.data)] = np.nan
+    if RESUME:
+        pending_recs = [
+            (obj_name, rec) for obj_name, rec in all_recs
+            if not (output_dir / obj_name / rec["date_token"] / rec["path"].name).exists()
+        ]
+        already_done = len(all_recs) - len(pending_recs)
+        tqdm.write(f"  RESUME: {already_done} frames already calibrated, "
+                   f"{len(pending_recs)} remaining")
+    else:
+        pending_recs = all_recs
+        already_done = 0
 
-            flat_corrected.header['BIASCORR'] = True
-            flat_corrected.header['OVRSCAN'] = True
-            flat_corrected.header['FLATCORR'] = True
+    TOTAL_WORK = (
+            total_bias_frames
+            + total_flat_frames
+            + len(pending_recs)
+    )
 
-            out_dir = output_dir / obj_name / night
-            out_dir.mkdir(parents = True, exist_ok = True)
-            out_path = out_dir / fpath.name
-            flat_corrected.write(out_path, overwrite = True)
+    overall_progress = tqdm(
+        total=TOTAL_WORK,
+        desc="Overall Progress",
+        unit="frame",
+        dynamic_ncols=True,
+        bar_format=(
+            "{l_bar}{bar}| "
+            "{n_fmt}/{total_fmt} "
+            "[Elapsed: {elapsed} | "
+            "ETA: {remaining} | "
+            "{rate_fmt}] "
+            "{percentage:3.0f}%"
+        ),
+    )
+
+    print(f"\n===CALIBRATING {len(all_recs)} LIGHT FRAMES===")
+    for obj_name, rec in pending_recs:
+
+        overall_progress.set_postfix_str(
+            f"Calibrating {obj_name}"
+        )
+        night = rec["date_token"]
+        filt = rec["filter"]
+        fpath = rec["path"]
+
+        out_dir = output_dir / obj_name / night
+        out_path = out_dir / fpath.name
+        if RESUME and out_path.exists():
+            tqdm.write(f"  RESUME: skipping {fpath.name} (already calibrated)")
+            n_ok += 1
+            overall_progress.update(1)
 
             log_rows.append({
                 "object": obj_name,
@@ -341,10 +481,56 @@ def main():
                 "filter": filt,
                 "source_file": str(fpath),
                 "output_file": str(out_path),
-                "bias_source": bias_source,
-                "flat_source": flat_source,
+                "bias_source": "resumed",
+                "flat_source": "resumed",
             })
-            n_ok += 1
+            continue
+
+        master_bias, bias_source = get_master_bias(night)
+        if master_bias is None:
+            tqdm.write(f"  SKIP {fpath.name}: NO BIAS for night {night}")
+            n_skipped += 1
+            overall_progress.update(1)
+            continue
+
+        master_flat, flat_source = get_master_flat(night, filt, master_bias)
+        if master_flat is None:
+            tqdm.write(f"  SKIP {fpath.name}: NO FLAT for filter {filt}")
+            n_skipped += 1
+            overall_progress.update(1)
+            continue
+
+        try:
+            raw = overscan_correct_and_trim(CCDData.read(fpath, unit=UNIT))
+            bias_sub = ccdp.subtract_bias(raw, master_bias)
+            flat_corrected = ccdp.flat_correct(bias_sub, master_flat)
+        except Exception as e:
+            tqdm.write(f"  SKIP {fpath.name}: could not process ({e})")
+            n_skipped += 1
+            overall_progress.update(1)
+            continue
+
+        flat_corrected.data[~np.isfinite(flat_corrected.data)] = np.nan
+        flat_corrected.header['BIASCORR'] = True
+        flat_corrected.header['OVRSCAN'] = True
+        flat_corrected.header['FLATCORR'] = True
+
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        flat_corrected.write(out_path, overwrite=True)
+
+        log_rows.append({
+            "object": obj_name,
+            "night": night,
+            "filter": filt,
+            "source_file": str(fpath),
+            "output_file": str(out_path),
+            "bias_source": bias_source,
+            "flat_source": flat_source,
+        })
+        n_ok += 1
+
+        overall_progress.update(1)
 
     log_path = Path("calibration_log.csv").resolve()
     with open(log_path, "w", newline = "") as f:
@@ -356,6 +542,8 @@ def main():
     n_fallback_bias = sum(1 for r in log_rows if r["bias_source"] != "night-specific")
     n_fallback_flat = sum(1 for r in log_rows if r["flat_source"] != "night-specific")
 
+    overall_progress.close()
+
     print(f"\n DONE: light frames calibrated, {n_skipped} skipped.")
     print(f" {n_fallback_bias} frames used a GLOBAL FALLBACK MASTER BIAS")
     print(f" {n_fallback_flat} frames used a GLOBAL FALLBACK MASTER FLAT")
@@ -363,5 +551,16 @@ def main():
     print(f"Calibrated frames are in: {output_dir}")
     print(f"Master calibration frames are in: {masters_dir}")
 
+    elapsed = time.perf_counter() - start_time
+
+    hours, rem = divmod(elapsed, 3600)
+    minutes, seconds = divmod(rem, 60)
+
+    print()
+    print("=" * 60)
+    print(f"TOTAL RUNTIME : {int(hours):02d}:{int(minutes):02d}:{seconds:05.2f}")
+    print("=" * 60)
+
 if __name__ == "__main__":
     main()
+
