@@ -23,12 +23,12 @@ from astropy.stats import mad_std
 
 ##======== CONFIGURATION BLOCK & SUCH ========##
 
-RAW_ROOT = "/Users/aidandombrosky/Desktop/sorted"
-OUTPUT_DIR = "/Volumes/starstuff/Frames/NURO_2011/calibrated"
-MASTERS_DIR = "/Volumes/starstuff/Frames/NURO_2011/master_calibrated"
+RAW_ROOT = "/Volumes/starstuff/Frames/ROBO_data/sorted"
+OUTPUT_DIR = "/Volumes/starstuff/Frames/ROBO_data/calibrated"
+MASTERS_DIR = "/Volumes/starstuff/Frames/ROBO_data/master_calibrated"
 
 BIAS_DIRNAME = "BIAS"
-FLAT_DIRNAME = "FLAT"       # ROBO_cam flats are for some reason under 'TWILIGHT FLAT'
+FLAT_DIRNAME = "TWILIGHT FLAT"       # ROBO_cam flats are for some reason under 'TWILIGHT FLAT' idk
 EXCLUDE_DIRNAMES = {BIAS_DIRNAME, FLAT_DIRNAME, "UNSORTED"}
 
 DRY_RUN = False
@@ -37,13 +37,13 @@ ALLOW_FALLBACK_TO_GLOBAL_MASTER = True
 RESUME = True
 
 UNIT = "adu"
-MEM_LIMIT_BYTES = 2e9
+MEM_LIMIT_BYTES = 5e9
 SIGMA_CLIP_LOW = 5
 SIGMA_CLIP_HIGH = 5
 
 APPLY_OVERSCAN_CORRECTION = True
 OVERSCAN_SECTION = "[2099:2138, 1:2052]"
-TRIM_SECTION = "[1:2048, 1:2052]"
+TRIM_SECTION = "[55:2098, 1:2052]"
 
 FITS_EXTENSIONS = {".fits", ".fit", ".fts", ".fits.gz", ".fit.gz"}
 FILTER_KEYWORDS = ["FILTNME1", "FILTNME2", "FILTER", "FILTER1", "FILTNAME"]
@@ -54,11 +54,14 @@ warnings.filterwarnings(
     category=UserWarning
 )
 
-def find_fits_files(root: Path):
+def find_fits_files(root: Path, exclude_dirs: set = None):
+    exclude_dirs = exclude_dirs or set()
     files = []
     for p in root.rglob("*"):
         if p.is_file():
             name_lower = p.name.lower()
+            if p.name.startswith("._"):
+                continue
             if any(name_lower.endswith(ext) for ext in FITS_EXTENSIONS):
                 files.append(p)
     return sorted(files)
@@ -264,6 +267,7 @@ def main():
     for (night, filt) in sorted(flat_by_night_filter):
         print(f" night = {night} filter = {filt}: {len(flat_by_night_filter [(night, filt)])} frames")
 
+
     print(f"\n===OBJECT FOLDERS FOUND===")
     for d in object_dirs:
         print(f" {d.name}")
@@ -277,6 +281,39 @@ def main():
         for r in recs:
             nights_needed.add(r["date_token"])
             filters_needed_by_night[r["date_token"]].add(r["filter"])
+
+    print("\n===DATE TOKEN DIAGNOSTIC===")
+    print("Bias nights found    :", sorted(bias_by_night.keys()))
+    print("Flat nights found    :", sorted(set(k[0] for k in flat_by_night_filter.keys())))
+    print("Light nights needed  :", sorted(nights_needed))
+    print()
+    print("Nights needed with NO matching bias:")
+    missing_bias = [n for n in sorted(nights_needed) if n not in bias_by_night]
+    print("  " + str(missing_bias) if missing_bias else "  (none -- all nights covered)")
+    print("Night/filter combos needed with NO matching flat:")
+    missing_flats = [(n, f) for n in sorted(nights_needed)
+                     for f in filters_needed_by_night[n]
+                     if (n, f) not in flat_by_night_filter]
+    if missing_flats:
+        for n, f in missing_flats:
+            print(f"  night={n} filter={f}")
+    else:
+        print("  (none -- all night/filter combos covered)")
+
+    print("\n===FILTER DIAGNOSTIC===")
+    flat_filters = sorted(set(r["filter"] for r in flat_records))
+    light_filters = sorted(set(
+        r["filter"]
+        for recs in light_records_by_object.values()
+        for r in recs
+    ))
+    print(f"Filters in flat frames : {flat_filters}")
+    print(f"Filters in light frames: {light_filters}")
+    mismatches = set(light_filters) - set(flat_filters)
+    if mismatches:
+        print(f"WARNING: these filters appear in light frames but NOT in flats: {mismatches}")
+    else:
+        print("All light frame filters have matching flat filters. GOOD STUFF!")
 
     print("\n===CHECKING CALIBRATION COVERAGE AGAINST LIGHT FRAMES===")
     any_fallback_needed = False

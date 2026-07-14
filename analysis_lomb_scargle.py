@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import make_interp_spline
 from astropy.timeseries import LombScargle
 
-df = pd.read_excel(r"/Users/aidandombrosky/Desktop/Spotted Starstuff/NURO_2011/hii_1883_cleanish.xlsx")
+df = pd.read_excel("/Volumes/starstuff/Frames/NURO_2011/plots/hii_1883_cleanish.xlsx")
 
 print("Columns found in your file:")
 print(list(df.columns))
