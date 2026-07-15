@@ -1,3 +1,5 @@
+##======== AIDAN'S TRIMMMER T-1000 ========##
+
 import argparse
 import sys
 import time

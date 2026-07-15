@@ -1,4 +1,4 @@
-##======== AIDAN'S OVERSCANNER & TRIM TESTER ========##
+##======== AIDAN'S OVERSCANNER & TRIM TESTER OF DOOM ========##
 
 from pathlib import Path
 from astropy.nddata import CCDData

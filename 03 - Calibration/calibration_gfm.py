@@ -1,4 +1,4 @@
-##======== AIDAN'S CALIBRATOR-INATOR ========##
+##======== AIDAN'S CALIBRATOR-INATOR (w/ GLOBAL FALLBACK MASTER) ========##
 
 import argparse
 import csv
